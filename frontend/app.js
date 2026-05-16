@@ -9,7 +9,11 @@
  *   leave it as "http://localhost:8000".
  * ========================================================================= */
 const API_BASE_URL = "http://localhost:8000";
-const SCALE = 4;
+
+// Enhancement settings (user-adjustable on the crop screen)
+let selectedScale = 4;        // 2 | 4 | 8 | 16
+let selectedSharpen = 0.8;    // 0.0 .. 2.0 (strength)
+let sharpenEnabled = true;    // master on/off for sharpening
 
 // ---------------------------------------------------------------------------
 // DOM
@@ -30,6 +34,13 @@ const cropCancelBtn= $("cropCancelBtn");
 const enhanceBtn   = $("enhanceBtn");
 const rotateBtn    = $("rotateBtn");
 const resetBtn     = $("resetBtn");
+const enhanceLabel = $("enhanceLabel");
+const scaleHint    = $("scaleHint");
+const sharpenSlider= $("sharpenSlider");
+const sharpenVal   = $("sharpenVal");
+const sharpenToggle= $("sharpenToggle");
+const sharpenCtrls = $("sharpenControls");
+const baAfterLabel = $("baAfterLabel");
 const saveBtn      = $("saveBtn");
 const shareBtn     = $("shareBtn");
 const restartBtn   = $("restartBtn");
@@ -108,6 +119,11 @@ fileInput.addEventListener("change", (e) => {
 function initCropper(dataUrl) {
   cropperImage.src = dataUrl;
   showScreen("crop");
+  setScale(selectedScale);                 // reflect current scale in the UI
+  sharpenToggle.checked = sharpenEnabled;
+  sharpenSlider.value = selectedSharpen;
+  sharpenVal.textContent = selectedSharpen.toFixed(2);
+  applySharpenEnabled();
 
   // Destroy any previous instance
   if (cropper) { cropper.destroy(); cropper = null; }
@@ -153,6 +169,47 @@ document.querySelectorAll(".ratio-chip").forEach(chip => {
 rotateBtn.addEventListener("click", () => cropper?.rotate(90));
 resetBtn.addEventListener("click",  () => cropper?.reset());
 
+// --- Scale selector ---
+function setScale(scale) {
+  selectedScale = scale;
+  document.querySelectorAll(".scale-chip").forEach(c => {
+    const active = parseInt(c.dataset.scale, 10) === scale;
+    c.style.background    = active ? "var(--accent)" : "";
+    c.style.color         = active ? "#0a0a0b" : "";
+    c.style.borderColor   = active ? "var(--accent)" : "";
+  });
+  enhanceLabel.textContent = `Enhance ${scale}×`;
+  // Honest hint about what high scales do
+  const hints = {
+    2:  "Crisp · safe",
+    4:  "Recommended",
+    8:  "Large · slight softening",
+    16: "Extreme · slow & blurry",
+  };
+  scaleHint.textContent = hints[scale] || "";
+}
+
+document.querySelectorAll(".scale-chip").forEach(chip => {
+  chip.addEventListener("click", () => setScale(parseInt(chip.dataset.scale, 10)));
+});
+
+// --- Sharpen on/off toggle ---
+function applySharpenEnabled() {
+  sharpenCtrls.classList.toggle("disabled", !sharpenEnabled);
+  sharpenSlider.disabled = !sharpenEnabled;
+}
+
+sharpenToggle.addEventListener("change", () => {
+  sharpenEnabled = sharpenToggle.checked;
+  applySharpenEnabled();
+});
+
+// --- Sharpen strength slider ---
+sharpenSlider.addEventListener("input", () => {
+  selectedSharpen = parseFloat(sharpenSlider.value);
+  sharpenVal.textContent = selectedSharpen.toFixed(2);
+});
+
 cropCancelBtn.addEventListener("click", () => {
   cropper?.destroy(); cropper = null;
   showScreen("idle");
@@ -192,10 +249,11 @@ enhanceBtn.addEventListener("click", async () => {
   form.append("file", blob, "input.png");
 
   try {
-    const res = await fetch(`${API_BASE_URL}/enhance?scale=${SCALE}`, {
-      method: "POST",
-      body: form,
-    });
+    // When the sharpen toggle is off, send 0 so the backend skips it entirely.
+    const sharpenParam = sharpenEnabled ? selectedSharpen : 0;
+    const res = await fetch(`https://ai-image-e6li.onrender.com/enhance?scale=${selectedScale}&sharpen=${sharpenParam}`,
+      { method: "POST", body: form }
+    );
 
     if (!res.ok) {
       let msg = `Server error (${res.status})`;
@@ -205,12 +263,18 @@ enhanceBtn.addEventListener("click", async () => {
 
     const outW = res.headers.get("X-Output-Width");
     const outH = res.headers.get("X-Output-Height");
+    const appliedScale = res.headers.get("X-Applied-Scale");
+    const wasCapped = res.headers.get("X-Capped") === "1";
     enhancedBlob = await res.blob();
 
     if (enhancedBlobUrl) URL.revokeObjectURL(enhancedBlobUrl);
     enhancedBlobUrl = URL.createObjectURL(enhancedBlob);
 
-    showResult(originalDataUrl, enhancedBlobUrl, outW, outH);
+    showResult(originalDataUrl, enhancedBlobUrl, outW, outH, appliedScale);
+
+    if (wasCapped) {
+      toast(`Output capped to server max — applied ${appliedScale}× instead of ${selectedScale}×.`);
+    }
   } catch (err) {
     console.error(err);
     const isNetwork = err instanceof TypeError;
@@ -227,11 +291,15 @@ enhanceBtn.addEventListener("click", async () => {
 // ---------------------------------------------------------------------------
 // Step 4 — Result + Before/After slider
 // ---------------------------------------------------------------------------
-function showResult(beforeUrl, afterUrl, outW, outH) {
+function showResult(beforeUrl, afterUrl, outW, outH, appliedScale) {
   origImg.src = beforeUrl;
   enhImg.src  = afterUrl;
 
   dimsLabel.textContent = (outW && outH) ? `${outW} × ${outH}` : "";
+
+  // Show the scale actually applied (may differ from requested if capped)
+  const shown = appliedScale ? parseFloat(appliedScale) : selectedScale;
+  baAfterLabel.textContent = `AFTER · ${Number.isInteger(shown) ? shown : shown.toFixed(1)}×`;
 
   // Cleanup cropper
   cropper?.destroy(); cropper = null;
