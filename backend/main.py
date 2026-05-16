@@ -18,6 +18,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
+)
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -63,6 +64,13 @@ def root():
         },
     }
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # อนุญาตให้ทุกเว็บส่งข้อมูลมาได้ (หรือจะใส่ URL netlify ของคุณตรงๆ ก็ได้)
+    allow_credentials=True,
+    allow_methods=["*"],  # อนุญาตทุกคำสั่ง (GET, POST, ฯลฯ)
+    allow_headers=["*"],
+)
 
 @app.get("/health")
 def health():
